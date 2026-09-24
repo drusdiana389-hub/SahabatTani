@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
-import { Drawer } from 'expo-router/drawer';
-import { supabase } from '../../lib/supabase';
+import { Drawer } from "expo-router/drawer";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, View } from "react-native";
+import { supabase } from "../../lib/supabase";
 
 export default function DrawerLayout() {
   const [role, setRole] = useState(null);
@@ -23,38 +23,35 @@ export default function DrawerLayout() {
       }
 
       const { data, error } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
         .maybeSingle();
 
-      console.log('ROLE USER:', data);
-      console.log('ROLE ERROR:', error);
+      console.log("ROLE USER:", data);
+      console.log("ROLE ERROR:", error);
 
       if (error) {
-        console.log('Gagal mengambil role:', error);
         setRole(null);
         return;
       }
 
       setRole(data?.role || null);
     } catch (error) {
-      console.log('ERROR LOAD ROLE:', error);
-      setRole(null);
+      console.log("ERROR ROLE:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  // Tunggu role selesai diambil
   if (loading) {
     return (
       <View
         style={{
           flex: 1,
-          justifyContent: 'center',
-          alignItems: 'center',
-          backgroundColor: '#F5F7F2',
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "#F5F7F2",
         }}
       >
         <ActivityIndicator size="large" color="#6B8E5A" />
@@ -66,60 +63,62 @@ export default function DrawerLayout() {
     <Drawer
       screenOptions={{
         headerShown: false,
-        drawerType: 'front',
+        drawerType: "front",
         drawerStyle: {
           width: 280,
         },
       }}
     >
-      {/* BERANDA */}
       <Drawer.Screen
         name="index"
         options={{
-          title: '🏠 Beranda',
+          title: "🏠 Beranda",
         }}
       />
 
-      {/* FORUM */}
+      {/* Tempat PETANI mengajukan pertanyaan */}
       <Drawer.Screen
         name="forum"
         options={{
-          title: '💬 Forum',
+          title: "💬 Forum",
         }}
       />
 
-      {/* PREDIKSI */}
       <Drawer.Screen
         name="prediksi"
         options={{
-          title: '🌾 Prediksi Panen',
+          title: "🌾 Prediksi Panen",
         }}
       />
 
-      {/* DASHBOARD PAKAR
-          HANYA MUNCUL UNTUK ROLE PAKAR */}
-      {role === 'pakar' && (
+      {/* Tempat PAKAR menjawab pertanyaan — hanya muncul untuk role pakar */}
+      {role === "pakar" && (
         <Drawer.Screen
           name="pakar"
           options={{
-            title: '👨‍🌾 Dashboard Pakar',
+            title: "📚 Tanya Jawab",
           }}
         />
       )}
 
-      {/* CUACA */}
       <Drawer.Screen
         name="cuaca"
         options={{
-          title: '🌦️ Cuaca',
+          title: "🌦️ Cuaca",
         }}
       />
 
-      {/* EXPLORE */}
+      <Drawer.Screen
+        name="pusat-tani"
+        options={{
+          title: "🌱 Pusat Tani",
+        }}
+      />
+
       <Drawer.Screen
         name="explore"
         options={{
-          title: '🔍 Explore',
+          title: "🔍 Explore",
         }}
       />
     </Drawer>

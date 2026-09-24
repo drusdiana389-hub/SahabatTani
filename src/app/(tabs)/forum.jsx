@@ -1,643 +1,513 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from "react";
 import {
-  View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  RefreshControl,
+  StyleSheet,
   Text,
   TextInput,
-  FlatList,
   TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  RefreshControl,
-  Alert,
-  Modal,
-} from 'react-native';
+  View,
+} from "react-native";
 
-import { router } from 'expo-router';
-import { supabase } from '../../lib/supabase';
+import { router } from "expo-router";
+import { supabase } from "../../lib/supabase";
 
 export default function Forum() {
   const [userId, setUserId] = useState(null);
   const [role, setRole] = useState(null);
-  const [konsultasi, setKonsultasi] = useState([]);
 
+  const [konsultasi, setKonsultasi] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const [modalVisible, setModalVisible] = useState(false);
-  const [judulBaru, setJudulBaru] = useState('');
+  const [judulBaru, setJudulBaru] = useState("");
   const [posting, setPosting] = useState(false);
 
-  const loadKonsultasi = useCallback(async () => {
+  const loadData = useCallback(async () => {
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
     if (!user) {
-      router.replace('/login');
+      router.replace("/login");
       return;
     }
 
     setUserId(user.id);
 
-    console.log('AUTH USER ID:', user.id);
-
-    // =========================================
-    // AMBIL ROLE USER
-    // =========================================
-
-    const { data: profileData, error: profileError } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
+    // Ambil role
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
       .maybeSingle();
 
-    console.log('PROFILE FORUM:', profileData);
-    console.log('PROFILE FORUM ERROR:', profileError);
+    console.log("PROFILE FORUM:", profile);
+    console.log("PROFILE ERROR:", profileError);
 
-    if (profileError) {
-      Alert.alert(
-        'Gagal memuat profil',
-        'Tidak bisa mengambil data role pengguna.'
-      );
-      return;
-    }
+    setRole(profile?.role || null);
 
-    setRole(profileData?.role || null);
-
-    console.log('ROLE USER:', profileData?.role);
-
-    // =========================================
-    // AMBIL DATA KONSULTASI
-    // =========================================
-
-    const { data, error } = await supabase
-      .from('konsultasi')
-      .select(
-        `
+    let query = supabase.from("konsultasi").select(
+      `
         id,
         judul,
         status,
         created_at,
-        petani:petani_id ( nama ),
-        pakar:pakar_id ( nama )
-      `
-      )
-      .order('created_at', { ascending: false });
+        petani_id,
+        pakar_id,
+        petani:petani_id (
+          nama
+        ),
+        pakar:pakar_id (
+          nama
+        )
+      `,
+    );
 
-    console.log('KONSULTASI:', data);
-    console.log('KONSULTASI ERROR:', error);
+    // Forum berisi inbox pribadi petani. Pakar melihat antrean konsultasinya.
+    if (profile?.role === "petani") {
+      query = query.eq("petani_id", user.id);
+    }
+
+    const { data, error } = await query.order("created_at", {
+      ascending: false,
+    });
+
+    console.log("KONSULTASI:", data);
+    console.log("KONSULTASI ERROR:", error);
 
     if (error) {
-      Alert.alert(
-        'Gagal memuat',
-        'Tidak bisa mengambil data forum.'
-      );
+      Alert.alert("Gagal memuat", error.message);
       return;
     }
 
     setKonsultasi(data || []);
   }, []);
 
-  // =========================================
-  // LOAD AWAL
-  // =========================================
-
   useEffect(() => {
-    (async () => {
+    const load = async () => {
       setLoading(true);
-      await loadKonsultasi();
+      await loadData();
       setLoading(false);
-    })();
-  }, [loadKonsultasi]);
+    };
 
-  // =========================================
-  // REFRESH
-  // =========================================
+    load();
+  }, [loadData]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadKonsultasi();
+    await loadData();
     setRefreshing(false);
   };
 
-  // =========================================
-  // BUAT PERTANYAAN
-  // KHUSUS PETANI
-  // =========================================
-
   const handleBuatPertanyaan = async () => {
-    console.log('=== TOMBOL KIRIM PERTANYAAN DIKLIK ===');
-
-    // CEK ROLE
-    if (role !== 'petani') {
-      Alert.alert(
-        'Akses ditolak',
-        'Hanya Petani yang dapat membuat pertanyaan.'
-      );
-      return;
-    }
-
     const judulBersih = judulBaru.trim();
 
     if (!judulBersih) {
-      Alert.alert(
-        'Peringatan',
-        'Judul pertanyaan tidak boleh kosong!'
-      );
+      Alert.alert("Peringatan", "Pertanyaan tidak boleh kosong.");
       return;
     }
 
     if (!userId) {
+      Alert.alert("Peringatan", "Sesi tidak ditemukan.");
+      return;
+    }
+
+    // Pastikan hanya petani yang bisa membuat pertanyaan
+    if (role !== "petani") {
       Alert.alert(
-        'Peringatan',
-        'Sesi kamu tidak ditemukan, coba login ulang.'
+        "Tidak diizinkan",
+        "🌱 Hanya petani yang dapat mengajukan pertanyaan.",
       );
       return;
     }
 
-    console.log('USER ID YANG DIKIRIM:', userId);
-
     setPosting(true);
 
     const { data, error } = await supabase
-      .from('konsultasi')
+      .from("konsultasi")
       .insert({
         petani_id: userId,
         judul: judulBersih,
-        status: 'menunggu',
+        status: "menunggu",
       })
       .select()
       .single();
 
     setPosting(false);
 
-    console.log('INSERT KONSULTASI:', data);
-    console.log('INSERT ERROR:', error);
+    console.log("INSERT KONSULTASI:", data);
+    console.log("INSERT ERROR:", error);
 
     if (error) {
-      Alert.alert(
-        'Gagal mengirim',
-        error.message
-      );
+      Alert.alert("Gagal mengirim", error.message);
       return;
     }
 
-    setJudulBaru('');
+    setJudulBaru("");
     setModalVisible(false);
 
-    await loadKonsultasi();
-  };
+    await loadData();
 
-  // =========================================
-  // LOADING
-  // =========================================
+    Alert.alert("Berhasil", "Pertanyaan berhasil dikirim ke forum.");
+  };
 
   if (loading) {
     return (
-      <View style={styles.centerFlex}>
-        <ActivityIndicator
-          size="large"
-          color="#6B8E5A"
-        />
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#6B8E5A" />
       </View>
     );
   }
 
-  // =========================================
-  // HALAMAN FORUM
-  // =========================================
-
   return (
     <View style={styles.container}>
-
-      {/* =========================
-          HEADER
-      ========================= */}
-
+      {/* HEADER */}
       <View style={styles.header}>
-
         <View>
-          <Text style={styles.title}>
-            Forum diskusi
-          </Text>
+          <Text style={styles.title}>💬 Konsultasi Pribadi</Text>
 
-          {role === 'pakar' && (
-            <Text style={styles.roleInfo}>
-              👨‍🌾 Mode Pakar
-            </Text>
-          )}
-
-          {role === 'petani' && (
-            <Text style={styles.roleInfo}>
-              🌱 Mode Petani
-            </Text>
-          )}
+          <Text style={styles.subtitle}>Chat pribadi kamu bersama pakar</Text>
         </View>
 
-        {/* =================================
-            TOMBOL BUAT PERTANYAAN
-            HANYA UNTUK PETANI
-        ================================= */}
-
-        {role === 'petani' && (
+        {/* HANYA PETANI YANG MEMBUAT KONSULTASI */}
+        {role === "petani" && (
           <TouchableOpacity
-            style={styles.newBtn}
+            style={styles.newButton}
             onPress={() => setModalVisible(true)}
           >
-            <Text style={styles.newBtnText}>
-              + Buat pertanyaan
-            </Text>
+            <Text style={styles.newButtonText}>+ Ajukan</Text>
           </TouchableOpacity>
         )}
-
       </View>
 
-      {/* =========================
-          DAFTAR KONSULTASI
-      ========================= */}
-
+      {/* DAFTAR PERTANYAAN */}
       <FlatList
         data={konsultasi}
         keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={styles.listContent}
-
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-
+        contentContainerStyle={styles.list}
         ListEmptyComponent={
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyText}>
-              Belum ada pertanyaan.
-            </Text>
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>Belum ada pertanyaan.</Text>
           </View>
         }
-
         renderItem={({ item }) => (
           <TouchableOpacity
             style={styles.card}
             onPress={() =>
               router.push({
-                pathname: '/konsultasi/[id]',
+                pathname: "/konsultasi/[id]",
                 params: {
                   id: item.id,
                 },
               })
             }
           >
-
-            <View style={styles.cardTop}>
-
-              <Text
-                style={styles.cardJudul}
-                numberOfLines={2}
-              >
+            <View style={styles.cardHeader}>
+              <Text style={styles.question} numberOfLines={2}>
                 {item.judul}
               </Text>
 
-              <StatusBadge
-                status={item.status}
-              />
-
+              <View
+                style={[
+                  styles.status,
+                  item.status === "dijawab"
+                    ? styles.statusAnswered
+                    : styles.statusWaiting,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.statusText,
+                    item.status === "dijawab"
+                      ? styles.statusTextAnswered
+                      : styles.statusTextWaiting,
+                  ]}
+                >
+                  {item.status === "dijawab" ? "Sudah dijawab" : "Menunggu"}
+                </Text>
+              </View>
             </View>
 
-            <Text style={styles.cardSub}>
-
-              {item.pakar?.nama
-                ? `Dijawab oleh ${item.pakar.nama}`
-                : `Oleh ${item.petani?.nama || 'Petani'}`}
-
+            <Text style={styles.petani}>
+              🌱 {item.petani?.nama || "Petani"}
             </Text>
 
+            {item.pakar?.nama && (
+              <Text style={styles.pakar}>
+                👨‍🌾 Dijawab oleh {item.pakar.nama}
+              </Text>
+            )}
+
+            <Text style={styles.openText}>Lihat diskusi →</Text>
           </TouchableOpacity>
         )}
       />
 
-      {/* =================================
-          MODAL BUAT PERTANYAAN
-          HANYA DIPAKAI PETANI
-      ================================= */}
-
-      {role === 'petani' && (
-        <Modal
-          visible={modalVisible}
-          animationType="slide"
-          transparent
-          onRequestClose={() => {
-            if (!posting) {
-              setModalVisible(false);
-            }
-          }}
-        >
-
-          <View style={styles.modalOverlay}>
-
-            <View style={styles.modalBox}>
-
-              <Text style={styles.modalTitle}>
-                Buat pertanyaan baru
-              </Text>
-
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Tulis pertanyaanmu di sini..."
-                placeholderTextColor="#9AA493"
-                value={judulBaru}
-                onChangeText={setJudulBaru}
-                multiline
-                numberOfLines={3}
-              />
-
-              <View style={styles.modalActions}>
-
-                {/* BATAL */}
-
-                <TouchableOpacity
-                  style={styles.modalCancelBtn}
-                  onPress={() => {
-                    setModalVisible(false);
-                    setJudulBaru('');
-                  }}
-                  disabled={posting}
-                >
-
-                  <Text style={styles.modalCancelText}>
-                    Batal
-                  </Text>
-
-                </TouchableOpacity>
-
-                {/* KIRIM */}
-
-                <TouchableOpacity
-                  style={[
-                    styles.modalSendBtn,
-                    posting &&
-                      styles.modalSendBtnDisabled,
-                  ]}
-                  onPress={handleBuatPertanyaan}
-                  disabled={posting}
-                >
-
-                  <Text style={styles.modalSendText}>
-                    {posting
-                      ? 'Mengirim...'
-                      : 'Kirim'}
-                  </Text>
-
-                </TouchableOpacity>
-
-              </View>
-
-            </View>
-
-          </View>
-
-        </Modal>
-      )}
-
-    </View>
-  );
-}
-
-
-// ========================================
-// STATUS BADGE
-// ========================================
-
-function StatusBadge({ status }) {
-
-  const isMenunggu =
-    status === 'menunggu';
-
-  return (
-    <View
-      style={[
-        styles.statusBadge,
-        isMenunggu
-          ? styles.statusMenunggu
-          : styles.statusSelesai,
-      ]}
-    >
-
-      <Text
-        style={[
-          styles.statusText,
-          isMenunggu
-            ? styles.statusTextMenunggu
-            : styles.statusTextSelesai,
-        ]}
+      {/* MODAL AJUKAN PERTANYAAN */}
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setModalVisible(false)}
       >
+        <View style={styles.overlay}>
+          <View style={styles.modal}>
+            <Text style={styles.modalTitle}>Ajukan Pertanyaan</Text>
 
-        {isMenunggu
-          ? 'Menunggu'
-          : status}
+            <Text style={styles.modalSubtitle}>
+              Pertanyaan kamu akan dilihat oleh pakar.
+            </Text>
 
-      </Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Contoh: Bagaimana cara menjaga kesuburan tanah?"
+              value={judulBaru}
+              onChangeText={setJudulBaru}
+              multiline
+              textAlignVertical="top"
+            />
 
+            <View style={styles.actions}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => {
+                  setModalVisible(false);
+                  setJudulBaru("");
+                }}
+                disabled={posting}
+              >
+                <Text style={styles.cancelText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.sendButton,
+                  posting && styles.sendButtonDisabled,
+                ]}
+                onPress={handleBuatPertanyaan}
+                disabled={posting}
+              >
+                <Text style={styles.sendText}>
+                  {posting ? "Mengirim..." : "Kirim Pertanyaan"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
-
-
-// ========================================
-// STYLE
-// ========================================
 
 const styles = StyleSheet.create({
-
   container: {
     flex: 1,
-    backgroundColor: '#F5F7F2',
+    backgroundColor: "#F5F7F2",
     paddingHorizontal: 20,
     paddingTop: 55,
   },
 
-  centerFlex: {
+  center: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F5F7F2',
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#F5F7F2",
   },
 
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 18,
   },
 
   title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#33422C',
+    fontSize: 22,
+    fontWeight: "bold",
+    color: "#33422C",
   },
 
-  roleInfo: {
-    fontSize: 11,
-    color: '#6B8E5A',
-    marginTop: 3,
-    fontWeight: '600',
+  subtitle: {
+    fontSize: 12,
+    color: "#7A8873",
+    marginTop: 4,
+    maxWidth: 220,
   },
 
-  newBtn: {
-    backgroundColor: '#6B8E5A',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 8,
+  newButton: {
+    backgroundColor: "#6B8E5A",
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderRadius: 9,
   },
 
-  newBtnText: {
-    color: '#FFFFFF',
-    fontSize: 12.5,
-    fontWeight: '700',
+  newButtonText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
   },
 
-  listContent: {
+  list: {
     paddingBottom: 40,
   },
 
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: '#D0D8C8',
+    borderColor: "#D0D8C8",
+    borderRadius: 13,
     padding: 16,
     marginBottom: 10,
   },
 
-  cardTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 6,
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
     gap: 8,
   },
 
-  cardJudul: {
-    fontSize: 14.5,
-    fontWeight: 'bold',
-    color: '#33422C',
+  question: {
     flex: 1,
+    fontSize: 15,
+    fontWeight: "bold",
+    color: "#33422C",
+    lineHeight: 21,
   },
 
-  cardSub: {
-    fontSize: 12.5,
-    color: '#7A8873',
-  },
-
-  statusBadge: {
-    paddingHorizontal: 10,
+  status: {
+    paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 20,
   },
 
-  statusMenunggu: {
-    backgroundColor: '#FAEEDA',
+  statusWaiting: {
+    backgroundColor: "#FAEEDA",
   },
 
-  statusSelesai: {
-    backgroundColor: '#DDEBD5',
+  statusAnswered: {
+    backgroundColor: "#DDEBD5",
   },
 
   statusText: {
-    fontSize: 10.5,
-    fontWeight: '700',
-    textTransform: 'capitalize',
+    fontSize: 9.5,
+    fontWeight: "700",
   },
 
-  statusTextMenunggu: {
-    color: '#BA7517',
+  statusTextWaiting: {
+    color: "#BA7517",
   },
 
-  statusTextSelesai: {
-    color: '#6B8E5A',
+  statusTextAnswered: {
+    color: "#4C7A32",
   },
 
-  emptyBox: {
-    padding: 30,
-    alignItems: 'center',
+  petani: {
+    fontSize: 12,
+    color: "#7A8873",
+    marginTop: 9,
+  },
+
+  pakar: {
+    fontSize: 12,
+    color: "#6B8E5A",
+    marginTop: 4,
+  },
+
+  openText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6B8E5A",
+    marginTop: 10,
+  },
+
+  empty: {
+    padding: 40,
+    alignItems: "center",
   },
 
   emptyText: {
-    fontSize: 13.5,
-    color: '#7A8873',
-    textAlign: 'center',
+    color: "#7A8873",
   },
 
-  modalOverlay: {
+  overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
   },
 
-  modalBox: {
-    backgroundColor: '#FFFFFF',
+  modal: {
+    backgroundColor: "#FFFFFF",
+    padding: 22,
+    paddingBottom: 35,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
-    padding: 22,
-    paddingBottom: 34,
   },
 
   modalTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#33422C',
-    marginBottom: 14,
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#33422C",
   },
 
-  modalInput: {
-    backgroundColor: '#F5F7F2',
+  modalSubtitle: {
+    fontSize: 12,
+    color: "#7A8873",
+    marginTop: 4,
+    marginBottom: 15,
+  },
+
+  input: {
+    minHeight: 110,
+    backgroundColor: "#F5F7F2",
     borderWidth: 1,
-    borderColor: '#D0D8C8',
+    borderColor: "#D0D8C8",
     borderRadius: 10,
-    padding: 14,
-    fontSize: 14.5,
-    minHeight: 90,
-    textAlignVertical: 'top',
-    marginBottom: 16,
-    color: '#33422C',
+    padding: 13,
+    fontSize: 14,
+    marginBottom: 15,
   },
 
-  modalActions: {
-    flexDirection: 'row',
+  actions: {
+    flexDirection: "row",
     gap: 10,
   },
 
-  modalCancelBtn: {
+  cancelButton: {
     flex: 1,
-    padding: 14,
-    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#D0D8C8',
-    alignItems: 'center',
-  },
-
-  modalCancelText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#33422C',
-  },
-
-  modalSendBtn: {
-    flex: 1,
-    padding: 14,
+    borderColor: "#D0D8C8",
+    padding: 13,
     borderRadius: 10,
-    backgroundColor: '#6B8E5A',
-    alignItems: 'center',
+    alignItems: "center",
   },
 
-  modalSendBtnDisabled: {
+  cancelText: {
+    color: "#33422C",
+    fontWeight: "600",
+  },
+
+  sendButton: {
+    flex: 1,
+    backgroundColor: "#6B8E5A",
+    padding: 13,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+
+  sendButtonDisabled: {
     opacity: 0.6,
   },
 
-  modalSendText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  sendText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
   },
-
 });

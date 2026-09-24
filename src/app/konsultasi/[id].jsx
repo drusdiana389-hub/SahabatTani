@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import {
   View,
   Text,
@@ -14,12 +14,52 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { supabase } from '../../lib/supabase';
 
+// ======================================================
+// KOTAK KETIKAN — dipisah jadi komponen sendiri.
+// Ini PENTING: komponen ini punya state teksnya sendiri
+// (bukan dari komponen induk), jadi walaupun daftar chat
+// di atas terus berubah (pesan baru masuk lewat Realtime),
+// kotak ketikan ini TIDAK ikut render ulang dan teks yang
+// sedang diketik tidak akan hilang/ke-reset.
+// ======================================================
+const ChatInputBar = memo(function ChatInputBar({ onSend, mengirim }) {
+  const [teks, setTeks] = useState('');
+
+  const handleKirim = () => {
+    const isiBersih = teks.trim();
+    if (!isiBersih) return;
+    onSend(isiBersih);
+    setTeks('');
+  };
+
+  return (
+    <View style={styles.inputRow}>
+      <TextInput
+        style={styles.input}
+        placeholder="Tulis pesan..."
+        value={teks}
+        onChangeText={setTeks}
+        multiline
+        autoCorrect={false}
+        spellCheck={false}
+        autoComplete="off"
+      />
+      <TouchableOpacity
+        style={[styles.sendBtn, mengirim && styles.sendBtnDisabled]}
+        onPress={handleKirim}
+        disabled={mengirim}
+      >
+        <Text style={styles.sendBtnText}>{mengirim ? '...' : 'Kirim'}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+});
+
 export default function DetailKonsultasi() {
   const { id } = useLocalSearchParams();
   const [userId, setUserId] = useState(null);
   const [konsultasi, setKonsultasi] = useState(null);
   const [pesan, setPesan] = useState([]);
-  const [teks, setTeks] = useState('');
   const [loading, setLoading] = useState(true);
   const [mengirim, setMengirim] = useState(false);
   const listRef = useRef(null);
@@ -87,60 +127,79 @@ export default function DetailKonsultasi() {
     })();
   }, [loadData]);
 
-  const handleKirim = async () => {
-  console.log('=== TOMBOL KIRIM PESAN DIKLIK ===');
+  // Dengarkan pesan baru secara real-time
+  useEffect(() => {
+    if (!id) return;
 
-  const isiBersih = teks.trim();
+    const channel = supabase
+      .channel(`pesan-konsultasi-${id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'pesan',
+          filter: `konsultasi_id=eq.${id}`,
+        },
+        (payload) => {
+          console.log('PESAN BARU MASUK:', payload.new);
+          setPesan((prev) => {
+            const sudahAda = prev.some((p) => p.id === payload.new.id);
+            if (sudahAda) return prev;
+            return [...prev, payload.new];
+          });
+        }
+      )
+      .subscribe();
 
-  if (!isiBersih) return;
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [id]);
 
-  if (!userId) {
-    Alert.alert(
-      'Peringatan',
-      'Sesi kamu tidak ditemukan, coba login ulang.'
-    );
-    return;
-  }
+  // Dibungkus useCallback dengan dependency stabil (id, userId),
+  // supaya ChatInputBar (yang di-memo) tidak ikut render ulang
+  // gara-gara fungsi ini berubah identitas tiap kali komponen render.
+  const handleKirim = useCallback(
+    async (isiBersih) => {
+      console.log('=== TOMBOL KIRIM PESAN DIKLIK ===');
 
-  setMengirim(true);
+      if (!userId) {
+        Alert.alert('Peringatan', 'Sesi kamu tidak ditemukan, coba login ulang.');
+        return;
+      }
 
-  const { data, error } = await supabase
-    .from('pesan')
-    .insert({
-      konsultasi_id: Number(id),
-      pengirim_id: userId,
-      isi: isiBersih,
-    })
-    .select(`
-      id,
-      isi,
-      created_at,
-      pengirim_id,
-      pengirim:pengirim_id ( nama )
-    `)
-    .single();
+      setMengirim(true);
 
-  setMengirim(false);
+      const { data, error } = await supabase
+        .from('pesan')
+        .insert({
+          konsultasi_id: id,
+          pengirim_id: userId,
+          isi: isiBersih,
+        })
+        .select()
+        .single();
 
-  console.log('PESAN BERHASIL:', data);
-  console.log('KIRIM PESAN ERROR:', error);
+      setMengirim(false);
 
-  if (error) {
-    Alert.alert('Gagal mengirim', error.message);
-    return;
-  }
+      console.log('KIRIM PESAN ERROR:', error);
 
-  // LANGSUNG MASUKKAN PESAN KE TAMPILAN CHAT
-  setPesan((prev) => [...prev, data]);
+      if (error) {
+        Alert.alert('Gagal mengirim', error.message);
+        return;
+      }
 
-  // Kosongkan input
-  setTeks('');
-
-  // Scroll ke pesan terbaru
-  setTimeout(() => {
-    listRef.current?.scrollToEnd({ animated: true });
-  }, 100);
-};
+      if (data) {
+        setPesan((prev) => {
+          const sudahAda = prev.some((p) => p.id === data.id);
+          if (sudahAda) return prev;
+          return [...prev, data];
+        });
+      }
+    },
+    [id, userId]
+  );
 
   if (loading) {
     return (
@@ -153,7 +212,8 @@ export default function DetailKonsultasi() {
   return (
     <KeyboardAvoidingView
       style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'android' ? 24 : 0}
     >
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
@@ -171,6 +231,7 @@ export default function DetailKonsultasi() {
 
       <FlatList
         ref={listRef}
+        style={{ flex: 1 }}
         data={pesan}
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.chatContent}
@@ -206,22 +267,7 @@ export default function DetailKonsultasi() {
         }}
       />
 
-      <View style={styles.inputRow}>
-        <TextInput
-          style={styles.input}
-          placeholder="Tulis pesan..."
-          value={teks}
-          onChangeText={setTeks}
-          multiline
-        />
-        <TouchableOpacity
-          style={[styles.sendBtn, mengirim && styles.sendBtnDisabled]}
-          onPress={handleKirim}
-          disabled={mengirim}
-        >
-          <Text style={styles.sendBtnText}>{mengirim ? '...' : 'Kirim'}</Text>
-        </TouchableOpacity>
-      </View>
+      <ChatInputBar onSend={handleKirim} mengirim={mengirim} />
     </KeyboardAvoidingView>
   );
 }
@@ -336,14 +382,13 @@ const styles = StyleSheet.create({
 
   input: {
     flex: 1,
-    backgroundColor: '#F5F7F2',
     borderWidth: 1,
     borderColor: '#D0D8C8',
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
     fontSize: 14,
-    maxHeight: 100,
+    textAlignVertical: 'top',
   },
 
   sendBtn: {
